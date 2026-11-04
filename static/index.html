@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Live Flood-Aware Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="/static/style.css">
+</head><body>
+<div id="map"></div>
+<div id="panel">
+  <div class="row"><b>Live flood-aware map</b><span><button id="theme" aria-label="Switch dark or light mode">🌙</button> <button id="toggle" aria-label="Collapse panel">▼</button></span></div>
+  <div id="body">
+    <div class="field"><input id="from" placeholder="From (e.g. Koramangala)" autocomplete="off"><button id="gps" title="Use my location">🎯</button><button class="pick" data-k="from" title="Pin on map">📌</button><ul id="from-s"></ul></div>
+    <div class="field"><input id="to" placeholder="To (e.g. Attibele)" autocomplete="off"><button class="pick" data-k="to" title="Pin on map">📌</button><ul id="to-s"></ul></div>
+    <div class="modes">
+      <button data-m="car" class="on">🚗 Car</button><button data-m="bike">🏍️ Bike</button><button data-m="walk">🚶 Walk</button>
+    </div>
+    <div id="types" class="types"></div>
+    <div id="alert" hidden></div>
+    <div id="wx"></div>
+    <div id="routes"></div>
+    <div class="row">
+      <button id="start" class="primary">▶ Start trip</button>
+    </div>
+        <div id="status"></div>
+    <button id="report">🌊 Report a flooded road</button>
+  </div>
+</div>
+<div id="hint" hidden></div>
+<footer id="copy">© 2026 Raghavendra Devaray Nayak. All rights reserved.</footer>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/static/app.js"></script>
+</body></html>
