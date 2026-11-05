@@ -170,11 +170,12 @@ function startTrip() {
 $('#start').onclick = () => watchId !== null ? stopTrip() : startTrip();
 
 /* ---------- crowd-sourced flood reports ---------- */
+function toast(msg) { const h = $('#hint'); h.textContent = msg; h.hidden = false; clearTimeout(h._t); h._t = setTimeout(() => { h.hidden = true; }, 6000); }
 async function loadReports() {
   const r = await (await fetch('/api/reports')).json();
   repLayer.clearLayers();
   r.forEach(p => L.marker([p.lat, p.lon], {icon: L.divIcon({className: '', html: '<div class="flood">🌊</div>', iconSize: [30, 30]})})
-    .bindPopup('Flooded road reported').addTo(repLayer));
+    .bindPopup(`Flooded road reported<br>Rain in last 3 h: ${p.mm} mm<br>Re-checked against the weather every 10 min`).addTo(repLayer));
 }
 $('#report').onclick = () => {
   reporting = !reporting; document.body.classList.toggle('reporting', reporting); if (reporting) cancelPick();
@@ -186,7 +187,11 @@ map.on('click', async e => {
   if (!reporting) return;
   reporting = false; document.body.classList.remove('reporting');
   $('#report').textContent = '🌊 Report a flooded road';
-  await fetch('/api/reports', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({lat: e.latlng.lat, lon: e.latlng.lng})});
+  toast('Checking rainfall at this spot…');
+  let d = {};
+  try { d = await (await fetch('/api/reports', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({lat: e.latlng.lat, lon: e.latlng.lng})})).json(); }
+  catch (err) { d = {error: 'Could not reach the server.'}; }
+  toast(d.ok ? '🌊 Verified by rainfall data and added to the map.' : (d.error || 'Report not added.'));
   await loadReports(); getRoutes(true);
 });
 $('#toggle').onclick = () => { const b = $('#body'); b.hidden = !b.hidden; $('#toggle').textContent = b.hidden ? '▲' : '▼'; };

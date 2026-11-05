@@ -1,4 +1,4 @@
-import os, re, math, time, sqlite3
+import os, re, math, time, sqlite3, threading
 import requests
 from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, request, jsonify, send_from_directory
@@ -7,7 +7,9 @@ app = Flask(__name__, static_folder="static", static_url_path="/static")
 DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports.db")
 UA = {"User-Agent": "LiveFloodMap/1.0 (learning project)"}
 COUNTRY = os.environ.get("COUNTRY", "in")          # limit search to one country ("" = worldwide)
-REPORT_TTL = 6 * 3600                               # flood reports stay active for 6 hours
+REPORT_TTL = 6 * 3600                               # a report never lives longer than 6 hours
+CHECK_EVERY = 600                                   # re-verify every report against the weather every 10 minutes
+FLOOD_NOW_MM, FLOOD_3H_MM = 4.0, 10.0              # rain (mm/h now, or mm in the last 3 h) that makes a flood plausible
 ROUTERS = {"car": "routed-car", "bike": "routed-bike", "walk": "routed-foot"}
 
 def db():
@@ -17,6 +19,11 @@ def db():
 
 with db() as c:
     c.execute("CREATE TABLE IF NOT EXISTS reports(id INTEGER PRIMARY KEY, lat REAL, lon REAL, ts REAL)")
+    cols = {r[1] for r in c.execute("PRAGMA table_info(reports)")}
+    if "next_check" not in cols:
+        c.execute("ALTER TABLE reports ADD COLUMN next_check REAL DEFAULT 0")
+    if "mm" not in cols:
+        c.execute("ALTER TABLE reports ADD COLUMN mm REAL DEFAULT 0")
 
 def hav(a, b):  # km between (lat, lon) pairs
     R = 6371.0
@@ -25,9 +32,49 @@ def hav(a, b):  # km between (lat, lon) pairs
     h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
     return 2 * R * math.asin(math.sqrt(h))
 
+def rain_supports_flood(lat, lon):
+    """Cross-check with live weather: did it rain enough here (now or in the last 3 hours) to flood a road?"""
+    r = requests.get("https://api.open-meteo.com/v1/forecast", timeout=10, params={
+        "latitude": f"{lat:.4f}", "longitude": f"{lon:.4f}", "current": "precipitation",
+        "hourly": "precipitation", "past_hours": 3, "forecast_hours": 1, "timezone": "auto"})
+    r.raise_for_status()
+    j = r.json()
+    now = j.get("current", {}).get("precipitation") or 0
+    total = sum(v or 0 for v in j.get("hourly", {}).get("precipitation", []))
+    return (now >= FLOOD_NOW_MM or total >= FLOOD_3H_MM), round(now, 1), round(total, 1)
+
+SWEEP_LOCK, last_sweep = threading.Lock(), [0.0]
+
+def sweep():
+    """Re-check due reports against the weather every 10 min; remove any the rain no longer supports."""
+    if not SWEEP_LOCK.acquire(blocking=False):
+        return
+    try:
+        last_sweep[0] = time.time()
+        now = time.time()
+        with db() as c:
+            c.execute("DELETE FROM reports WHERE ts < ?", (now - REPORT_TTL,))
+            due = c.execute("SELECT id, lat, lon FROM reports WHERE next_check <= ? LIMIT 8", (now,)).fetchall()
+        for r in due:
+            try:
+                ok, _, mm = rain_supports_flood(r["lat"], r["lon"])
+            except Exception:                      # weather service unreachable: keep the report, retry soon
+                with db() as c:
+                    c.execute("UPDATE reports SET next_check=? WHERE id=?", (time.time() + 120, r["id"]))
+                continue
+            with db() as c:
+                if ok:
+                    c.execute("UPDATE reports SET next_check=?, mm=? WHERE id=?", (time.time() + CHECK_EVERY, mm, r["id"]))
+                else:
+                    c.execute("DELETE FROM reports WHERE id=?", (r["id"],))
+    finally:
+        SWEEP_LOCK.release()
+
 def recent_reports():
+    if time.time() - last_sweep[0] >= 60:
+        threading.Thread(target=sweep, daemon=True).start()
     with db() as c:
-        rows = c.execute("SELECT lat, lon, ts FROM reports WHERE ts > ?", (time.time() - REPORT_TTL,)).fetchall()
+        rows = c.execute("SELECT lat, lon, ts, mm FROM reports WHERE ts > ?", (time.time() - REPORT_TTL,)).fetchall()
     return [dict(r) for r in rows]
 
 def get_weather(points):
@@ -217,7 +264,7 @@ def route():
 
 @app.get("/api/reports")
 def reports_get():
-    return jsonify([{"lat": r["lat"], "lon": r["lon"]} for r in recent_reports()])
+    return jsonify([{"lat": r["lat"], "lon": r["lon"], "mm": round(r["mm"] or 0, 1)} for r in recent_reports()])
 
 @app.post("/api/reports")
 def reports_post():
@@ -226,10 +273,16 @@ def reports_post():
         lat, lon = float(d["lat"]), float(d["lon"])
         assert -90 <= lat <= 90 and -180 <= lon <= 180
     except Exception:
-        return jsonify(error="Bad location"), 400
+        return jsonify(ok=False, error="Bad location"), 400
+    try:
+        ok, now_mm, total_mm = rain_supports_flood(lat, lon)
+    except Exception:
+        return jsonify(ok=False, error="Could not check the weather right now. Please try again in a minute."), 503
+    if not ok:
+        return jsonify(ok=False, error=f"No heavy rain at this spot (last 3 hours: {total_mm} mm), so the flood report was not added."), 422
     with db() as c:
-        c.execute("INSERT INTO reports(lat, lon, ts) VALUES(?,?,?)", (lat, lon, time.time()))
-        c.execute("DELETE FROM reports WHERE ts < ?", (time.time() - 24 * 3600,))
+        c.execute("INSERT INTO reports(lat, lon, ts, next_check, mm) VALUES(?,?,?,?,?)",
+                  (lat, lon, time.time(), time.time() + CHECK_EVERY, total_mm))
     return jsonify(ok=True)
 
 if __name__ == "__main__":
