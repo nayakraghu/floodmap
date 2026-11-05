@@ -20,9 +20,19 @@
     <div id="routes"></div>
     <div class="row">
       <button id="start" class="primary">▶ Start trip</button>
+      <span id="ride" class="ridebtns" hidden><button id="pause">⏸ Pause</button><button id="stop" class="danger">■ Stop</button></span>
     </div>
         <div id="status"></div>
     <button id="report">🌊 Report a flooded road</button>
+  </div>
+</div>
+<div id="summary" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="sum-title">
+  <div class="box">
+    <div class="big" id="sum-icon">🎉</div>
+    <h2 id="sum-title">Ride completed</h2>
+    <p id="sum-text"></p>
+    <div class="stats"><div><b id="sum-dist"></b><span>distance</span></div><div><b id="sum-time"></b><span>duration</span></div><div><b id="sum-speed"></b><span>avg speed</span></div></div>
+    <button id="sum-close" class="primary">Done</button>
   </div>
 </div>
 <div id="hint" hidden></div>

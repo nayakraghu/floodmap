@@ -42,3 +42,15 @@ body.reporting #map,body.picking #map{cursor:crosshair}
 @media (prefers-reduced-motion:reduce){.walk{animation:none}}
 #copy{position:absolute;z-index:1000;left:10px;bottom:10px;background:var(--bg);color:var(--muted);font-size:12px;padding:4px 10px;border-radius:12px;box-shadow:0 2px 8px var(--shadow);max-width:calc(100% - 140px)}
 .field ul{max-height:50vh;overflow:auto}
+[hidden]{display:none!important}
+.ridebtns{display:flex;gap:8px;flex:1}.ridebtns button{flex:1;font-weight:600}
+button.danger{border-color:var(--bad);color:var(--bad)}
+.modal{position:fixed;inset:0;z-index:2000;background:#000a;display:grid;place-items:center;padding:16px}
+.modal .box{background:var(--bg);color:var(--fg);border-radius:18px;padding:22px;max-width:380px;width:100%;text-align:center;box-shadow:0 10px 40px #000a}
+.modal .big{font-size:48px;line-height:1.1}
+.modal h2{margin:8px 0 4px;font-size:22px}
+.modal p{margin:0 0 14px;color:var(--muted)}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px}
+.stats div{background:var(--soft);border-radius:12px;padding:10px 4px}
+.stats b{display:block;font-size:16px}.stats span{font-size:11px;color:var(--muted)}
+.modal button.primary{width:100%;flex:none}

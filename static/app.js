@@ -120,36 +120,62 @@ function banner() {
 }
 
 /* ---------- trip: simulated or real GPS ---------- */
-let lastPos = null, lastReroute = 0, prevLL = null, bobT = null, cumCache = {g: null, cum: null};
+let lastPos = null, lastReroute = 0, prevLL = null, bobT = null, cumCache = {g: null, cum: null}, ride = null, rideTick = null;
+const GEO_OPTS = {enableHighAccuracy: true, maximumAge: 2000, timeout: 20000};
 function cumOf(g) {
   if (cumCache.g !== g) { const c = [0]; for (let i = 1; i < g.length; i++) c.push(c[i - 1] + map.distance(g[i - 1], g[i])); cumCache = {g, cum: c}; }
   return cumCache.cum;
 }
+function fmtDur(s) {
+  s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), r = s % 60;
+  return h ? `${h} h ${m} min` : m ? `${m} min ${r} s` : `${r} s`;
+}
+function fmtKm(m) { const k = m / 1000; return (k < 10 ? k.toFixed(2) : k.toFixed(1)) + ' km'; }
+function elapsed() { return ride ? ((ride.paused ? ride.pausedAt : Date.now()) - ride.start - ride.pausedTotal) / 1000 : 0; }
+function showStatus() { if (ride) $('#status').textContent = `${ride.paused ? '⏸ Paused · ' : ''}${ride.msg} · ${fmtDur(elapsed())}`; }
+function setRideUI(active) { $('#start').hidden = active; $('#ride').hidden = !active; $('#pause').textContent = '⏸ Pause'; }
 function stopTrip(keepMarker) {
   if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+  clearInterval(rideTick); rideTick = null;
   if (vehicle && !keepMarker) { map.removeLayer(vehicle); vehicle = null; }
-  prevLL = null; lastPos = null;
-  $('#start').textContent = '▶ Start trip';
+  prevLL = null; lastPos = null; ride = null; setRideUI(false);
+}
+function finishRide(arrived) {
+  if (!ride) return;
+  const m = ride.dist, secs = elapsed();
+  stopTrip(arrived); $('#status').textContent = '';
+  $('#sum-icon').textContent = arrived ? '🎉' : '🏁';
+  $('#sum-title').textContent = arrived ? 'Ride completed' : 'Ride ended';
+  $('#sum-text').textContent = `You have ${arrived ? 'completed' : 'covered'} ${fmtKm(m)} in ${fmtDur(secs)}.`;
+  $('#sum-dist').textContent = fmtKm(m); $('#sum-time').textContent = fmtDur(secs);
+  $('#sum-speed').textContent = secs > 5 && m > 0 ? (m / 1000 / (secs / 3600)).toFixed(1) + ' km/h' : '–';
+  $('#summary').hidden = false; $('#sum-close').focus();
 }
 function onPos(p) {
+  if (!ride || ride.paused) return;
   const ll = [p.coords.latitude, p.coords.longitude];
-  if (p.coords.accuracy > 200) { $('#status').textContent = `Waiting for a precise GPS signal (±${Math.round(p.coords.accuracy)} m). A phone gives the best accuracy.`; return; }
+  if (p.coords.accuracy > 200) { ride.msg = `Waiting for a precise GPS signal (±${Math.round(p.coords.accuracy)} m)`; showStatus(); return; }
   lastPos = {lat: ll[0], lon: ll[1], name: 'My location'};
   if (!vehicle) { vehicle = L.marker(ll, {icon: icon(), zIndexOffset: 1000}).addTo(map); map.setView(ll, Math.max(map.getZoom(), 16)); }
   else { vehicle.setLatLng(ll); map.panTo(ll); }
-  const moved = prevLL ? map.distance(prevLL, ll) : 0; prevLL = ll;
+  let moved = 0;
+  if (!prevLL) prevLL = ll;
+  else {
+    const d = map.distance(prevLL, ll);
+    if (d > 500) prevLL = ll;                       // GPS glitch: ignore the jump
+    else if (d >= 5) { ride.dist += d; moved = d; prevLL = ll; }
+  }
   const el = vehicle.getElement() && vehicle.getElement().firstChild;
-  if (el && mode === 'walk' && moved > 3) { el.classList.add('walk'); clearTimeout(bobT); bobT = setTimeout(() => el.classList.remove('walk'), 4000); }
+  if (el && mode === 'walk' && moved > 0) { el.classList.add('walk'); clearTimeout(bobT); bobT = setTimeout(() => el.classList.remove('walk'), 4000); }
   const g = routes[sel].geometry, cum = cumOf(g);
+  if (map.distance(ll, g.at(-1)) < 50) { finishRide(true); return; }
   let best = 0, bd = Infinity;
   for (let i = 0; i < g.length; i++) { const d = map.distance(ll, g[i]); if (d < bd) { bd = d; best = i; } }
-  if (map.distance(ll, g.at(-1)) < 50) { stopTrip(true); $('#status').textContent = '🎉 You have arrived.'; return; }
   if (bd > 100) {
-    $('#status').textContent = '⚠️ You are off the route. Finding a new one…';
+    ride.msg = '⚠️ Off route, finding a new one…';
     if (Date.now() - lastReroute > 20000) { lastReroute = Date.now(); getRoutes(true, lastPos); }
-  } else {
-    $('#status').textContent = `${((cum.at(-1) - cum[best]) / 1000).toFixed(1)} km to go`;
-  }
+  } else ride.msg = `${((cum.at(-1) - cum[best]) / 1000).toFixed(1)} km to go`;
+  showStatus();
 }
 function geoMsg(e) {
   if (!window.isSecureContext) return 'Location only works on https links or on localhost.';
@@ -157,17 +183,33 @@ function geoMsg(e) {
   if (e.code === 3) return 'Could not get your location in time. Check your signal and try again.';
   return 'Your device could not find your location. Turn on Location in your Windows or phone settings, then try again.';
 }
+function onGeoErr(err) { $('#status').textContent = geoMsg(err); stopTrip(); }
 function startTrip() {
   if (!routes.length) { $('#status').textContent = 'Pick a start and destination first.'; return; }
   if (!navigator.geolocation) { $('#status').textContent = 'This device has no GPS.'; return; }
   stopTrip();
-  $('#start').textContent = '■ Stop trip';
-  $('#status').textContent = 'Waiting for your location…';
-  watchId = navigator.geolocation.watchPosition(onPos, err => {
-    $('#status').textContent = geoMsg(err); stopTrip();
-  }, {enableHighAccuracy: true, maximumAge: 2000, timeout: 20000});
+  ride = {start: Date.now(), paused: false, pausedAt: 0, pausedTotal: 0, dist: 0, msg: 'Waiting for your location…'};
+  setRideUI(true); showStatus(); rideTick = setInterval(showStatus, 1000);
+  watchId = navigator.geolocation.watchPosition(onPos, onGeoErr, GEO_OPTS);
 }
-$('#start').onclick = () => watchId !== null ? stopTrip() : startTrip();
+function togglePause() {
+  if (!ride) return;
+  if (!ride.paused) {
+    ride.paused = true; ride.pausedAt = Date.now();
+    if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+    $('#pause').textContent = '▶ Resume';
+  } else {
+    ride.pausedTotal += Date.now() - ride.pausedAt; ride.paused = false; prevLL = null;   // movement while paused is not counted
+    $('#pause').textContent = '⏸ Pause';
+    watchId = navigator.geolocation.watchPosition(onPos, onGeoErr, GEO_OPTS);
+  }
+  showStatus();
+}
+$('#start').onclick = startTrip;
+$('#pause').onclick = togglePause;
+$('#stop').onclick = () => finishRide(false);
+$('#sum-close').onclick = () => { $('#summary').hidden = true; };
+$('#summary').onclick = e => { if (e.target.id === 'summary') $('#summary').hidden = true; };
 
 /* ---------- crowd-sourced flood reports ---------- */
 function toast(msg) { const h = $('#hint'); h.textContent = msg; h.hidden = false; clearTimeout(h._t); h._t = setTimeout(() => { h.hidden = true; }, 6000); }
@@ -228,7 +270,7 @@ document.querySelectorAll('.pick').forEach(b => b.onclick = () => {
 });
 
 renderTypes(); loadReports();
-setInterval(() => { loadReports(); if (routes.length) getRoutes(true, watchId !== null ? lastPos : null); }, 120000);
+setInterval(() => { loadReports(); if (routes.length) getRoutes(true, ride && lastPos ? lastPos : null); }, 120000);
 
 /* ---------- dark / light mode ---------- */
 function setTheme(t) {
